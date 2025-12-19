@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import shap
 from scipy import stats
 from scipy.stats import boxcox
 from sklearn.cluster import KMeans
