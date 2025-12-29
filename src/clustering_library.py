@@ -19,7 +19,7 @@ from scipy.stats import boxcox
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix, silhouette_samples, silhouette_score
+from sklearn.metrics import accuracy_score, confusion_matrix, silhouette_samples, silhouette_score, davies_bouldin_score, calinski_harabasz_score
 from sklearn.preprocessing import StandardScaler
 
 
@@ -453,13 +453,13 @@ class ClusterAnalyzer:
         "Mean_TotalPriceSumPerStock": "Tổng giá trị/sản phẩm",
     }
 
-    def __init__(self, scaled_features_path, original_features_path):
+    def __init__(self, scaled_features_path=None, original_features_path=None):
         """
         Initialize the ClusterAnalyzer with feature data paths.
 
         Args:
-            scaled_features_path (str): Path to scaled features file
-            original_features_path (str): Path to original features file
+            scaled_features_path (str, optional): Path to scaled features file. Defaults to None.
+            original_features_path (str, optional): Path to original features file. Defaults to None.
         """
         self.scaled_features_path = scaled_features_path
         self.original_features_path = original_features_path
@@ -472,6 +472,67 @@ class ClusterAnalyzer:
         self.surrogate_models = {}
         self.shap_results = {}
 
+    def evaluate_clustering(self, labels, data=None):
+        """
+        Evaluate clustering performance using multiple metrics.
+
+        Args:
+            labels (array-like): Cluster labels
+            data (pd.DataFrame, optional): Data to evaluate on. Defaults to scaled features.
+
+        Returns:
+            dict: Dictionary of metric scores
+        """
+        if data is None:
+            if self.df_scaled is not None:
+                data = self.df_scaled
+            else:
+                raise ValueError("No data provided and df_scaled is empty.")
+
+        # Check for valid number of clusters (> 1)
+        # DBSCAN might produce -1 for noise
+        unique_labels = set(labels)
+        if -1 in unique_labels:
+            unique_labels.remove(-1)
+        
+        metrics = {}
+        
+        print("\n" + "="*50)
+        print("CLUSTERING PERFORMANCE EVALUATION")
+        print("="*50)
+
+        if len(unique_labels) < 2:
+            print("Warning: Less than 2 clusters found. Metrics cannot be calculated.")
+            return metrics
+
+        # Silhouette Score
+        try:
+            sil_score = silhouette_score(data, labels)
+            metrics['Silhouette Score'] = sil_score
+            print(f"Silhouette Score: {sil_score:.4f}")
+        except Exception as e:
+            print(f"Silhouette Score: Error ({e})")
+
+        # Davies-Bouldin Index
+        try:
+            db_score = davies_bouldin_score(data, labels)
+            metrics['Davies-Bouldin Index'] = db_score
+            print(f"Davies-Bouldin Index: {db_score:.4f}")
+        except Exception as e:
+            print(f"Davies-Bouldin Index: Error ({e})")
+
+        # Calinski-Harabasz Score
+        try:
+            ch_score = calinski_harabasz_score(data, labels)
+            metrics['Calinski-Harabasz Score'] = ch_score
+            print(f"Calinski-Harabasz Score: {ch_score:.2f}")
+        except Exception as e:
+            print(f"Calinski-Harabasz Score: Error ({e})")
+            
+        print("="*50)
+        
+        return metrics
+
     def load_data(self):
         """
         Load scaled and original features data.
@@ -479,6 +540,12 @@ class ClusterAnalyzer:
         Returns:
             tuple: (scaled_features_df, original_features_df)
         """
+        if self.scaled_features_path is None:
+            self.scaled_features_path = "../data/processed/customer_features_scaled.csv"
+        
+        if self.original_features_path is None:
+            self.original_features_path = "../data/processed/customer_features.csv"
+
         self.df_scaled = pd.read_csv(self.scaled_features_path, index_col=0)
         self.df_original = pd.read_csv(self.original_features_path, index_col=0)
 
@@ -656,13 +723,45 @@ class ClusterAnalyzer:
 
         return self.cluster_results
 
-    def plot_clusters_pca(self, k_values=[3, 4]):
+    def plot_clusters_pca(self, k_values=None, labels=None, title=None):
         """
         Visualize clusters in PCA space.
 
         Args:
-            k_values (list): List of k values to visualize
+            k_values (list, optional): List of k values to visualize (for internal KMeans)
+            labels (array-like, optional): Specific cluster labels to visualize (overrides k_values)
+            title (str, optional): Custom title for the plot
         """
+        if labels is not None:
+            # Mode 1: Plot specific labels (e.g. from DBSCAN/Hierarchical)
+            fig, ax = plt.subplots(figsize=(10, 8))
+            
+            # Use existing PCA or fit if missing
+            if self.df_pca is None:
+                self.apply_pca(n_components=2)
+                
+            scatter = ax.scatter(
+                self.df_pca["PC1"],
+                self.df_pca["PC2"],
+                c=labels,
+                cmap="viridis",
+                alpha=0.6,
+                s=50,
+            )
+            ax.set_xlabel("PC1")
+            ax.set_ylabel("PC2")
+            if title:
+                ax.set_title(title)
+            else:
+                ax.set_title("Cluster Visualization (PCA)")
+            plt.colorbar(scatter, ax=ax, label="Cluster")
+            plt.tight_layout()
+            plt.show()
+            return
+
+        if k_values is None:
+            k_values = [3, 4]
+
         fig, axes = plt.subplots(1, len(k_values), figsize=(16, 6))
         if len(k_values) == 1:
             axes = [axes]
@@ -721,15 +820,27 @@ class ClusterAnalyzer:
         plt.tight_layout()
         plt.show()
 
-    def create_radar_chart(self, k, cluster_names=None):
+    def create_radar_chart(self, k=None, labels=None, cluster_names=None):
         """
         Create professional radar chart for cluster analysis.
 
         Args:
-            k (int): Number of clusters
+            k (int, optional): Number of clusters (if using internal KMeans results)
+            labels (array-like, optional): Cluster labels to calculate means from (overrides k)
             cluster_names (list): Custom names for clusters
         """
-        cluster_means = self.cluster_results[k]["means"]
+        if labels is not None:
+            # Calculate means from provided labels
+            temp_df = self.df_original.copy()
+            temp_df['Cluster'] = labels
+            # Exclude noise (-1) if present for mean calculation logic if desired, 
+            # currently just grouping by Cluster
+            cluster_means = temp_df.groupby('Cluster').mean()
+            k = len(set(labels)) - (1 if -1 in labels else 0)
+        elif k is not None:
+            cluster_means = self.cluster_results[k]["means"]
+        else:
+            raise ValueError("Must provide either k or labels")
 
         # Chọn features quan trọng cho radar chart
         important_features = {

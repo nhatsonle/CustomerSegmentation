@@ -1,0 +1,29 @@
+# Clustering Configuration
+clustering:
+  kmeans:
+    n_clusters_range: [2, 3, 4, 5, 6, 7, 8, 9, 10]
+    random_state: 42
+    n_init: 10
+    max_iter: 300
+  
+  dbscan:
+    eps_range: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+    min_samples_range: [3, 5, 10, 15]
+  
+  hierarchical:
+    n_clusters_range: [2, 3, 4, 5, 6, 7, 8]
+    linkage: ['ward', 'complete', 'average', 'single']
+  
+  # PCA for visualization
+  pca:
+    n_components: 2
+  
+  # Evaluation metrics
+  evaluation:
+    metrics: ['silhouette', 'calinski_harabasz', 'davies_bouldin']
+
+# Data preprocessing
+preprocessing:
+  scaler: 'standard'  # standard, minmax, robust
+  remove_outliers: true
+  outlier_method: 'iqr'  # iqr, zscore
